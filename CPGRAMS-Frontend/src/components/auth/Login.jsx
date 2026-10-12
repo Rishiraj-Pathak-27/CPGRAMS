@@ -31,46 +31,76 @@ const Login = () => {
     }
   }, []);
 
-  const handleLogin = async () => {
-    setIsLoading(true);
-    try {
-      const res = await axios.post(`${API_BASE_URL}/api/auth/login`, loginForm);
-      const data = res.data;
+const handleLogin = async () => {
+  if (!loginForm.email.trim() || !loginForm.password) {
+    const message = "Please enter email and password.";
+    setError(message);
+    showToast(message, "error");
+    return;
+  }
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data));
+  setError("");
+  setIsLoading(true);
 
-      // Handle Remember Me functionality
-      if (rememberMe) {
-        localStorage.setItem("rememberedEmail", loginForm.email);
-        localStorage.setItem("rememberMe", "true");
-      } else {
-        localStorage.removeItem("rememberedEmail");
-        localStorage.removeItem("rememberMe");
+  try {
+    const res = await axios.post(
+      `${API_BASE_URL}/api/auth/login`,
+      {
+        email: loginForm.email.trim().toLowerCase(),
+        password: loginForm.password,
       }
+    );
 
-      showToast("Welcome back! Redirecting to citizen dashboard...", "success"); // 💡 Show success toast
+    const data = res.data;
 
-      setTimeout(() => {
-        if (data.role === "user") {
-          navigate("/");
-        } else if (data.role === "officer" || data.role === "lead_officer") {
-          navigate("/PGO-Dashboard");
-        } else if (data.role === "admin") {
-          navigate("/Admin-Dashboard");
-        }
-      }, 1000);
-    } catch (err) {
-      let errorMessage = "Server error";
-      if (err.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      }
-      setError(errorMessage);
-      showToast(errorMessage, "error"); // 💡 Show error toast
-    } finally {
-      setIsLoading(false);
+    if (!data.token) {
+      throw new Error("Login succeeded but no authentication token was returned.");
     }
-  };
+
+    // Supports both MySQL login response and existing officer/admin responses.
+    const role = data.user?.role || data.role || "user";
+
+    const user = {
+      ...(data.user || {}),
+      role,
+    };
+
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("user", JSON.stringify(user));
+
+    if (rememberMe) {
+      localStorage.setItem("rememberedEmail", loginForm.email.trim());
+      localStorage.setItem("rememberMe", "true");
+    } else {
+      localStorage.removeItem("rememberedEmail");
+      localStorage.removeItem("rememberMe");
+    }
+
+    const destination =
+      role === "admin"
+        ? "/Admin-Dashboard"
+        : role === "officer" || role === "lead_officer"
+          ? "/PGO-Dashboard"
+          : "/myGrievance";
+
+    showToast("Welcome back! Redirecting...", "success");
+
+    window.setTimeout(() => {
+      navigate(destination, { replace: true });
+    }, 800);
+  } catch (err) {
+    const errorMessage =
+      err.response?.data?.message ||
+      err.message ||
+      "Unable to log in. Please try again.";
+
+    console.error("Login error:", err);
+    setError(errorMessage);
+    showToast(errorMessage, "error");
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const clickForgotPassword = () => {
     navigate("/forgotpassword");

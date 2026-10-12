@@ -42,7 +42,7 @@ export default function CitizenProfile() {
   };
 
   const buildProfileData = (baseUser, userProfile = null) => ({
-    _id: userProfile?._id || baseUser._id || "local-profile",
+    _id: userProfile?._id || baseUser._id || baseUser.srno || "local-profile",
     name: baseUser.fullName || baseUser.name || PROFILE_DETAILS.name,
     email: baseUser.email || PROFILE_DETAILS.email,
     phone: baseUser.phoneNumber || baseUser.phone || PROFILE_DETAILS.phone,
@@ -118,7 +118,9 @@ export default function CitizenProfile() {
           return;
         }
 
-        if (!token) {
+        // MySQL users have `srno`, not MongoDB `_id`.
+// Do not call the old MongoDB userProfile API with an undefined ID.
+        if (!token || !loggedInUser._id) {
           const localProfile = buildProfileData(loggedInUser, null);
           setProfile(localProfile);
           setEdit(localProfile);

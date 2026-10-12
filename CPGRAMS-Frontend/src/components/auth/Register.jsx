@@ -1,12 +1,23 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { showToast } from "../../utils/customToast";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
+const createCaptcha = () => {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+  return Array.from(
+    { length: 6 },
+    () => chars[Math.floor(Math.random() * chars.length)]
+  ).join("");
+};
 
 export default function MultiStepRegister({ onRegisterSuccess }) {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [captcha, setCaptcha] = useState(createCaptcha());
 
   const [registerForm, setRegisterForm] = useState({
     fullName: "",
@@ -16,30 +27,92 @@ export default function MultiStepRegister({ onRegisterSuccess }) {
     state: "",
     district: "",
     pincode: "",
-    phoneNumber: "", 
+    phoneNumber: "",
     email: "",
     password: "",
     confirmPassword: "",
     securityCode: "",
   });
 
-  const [captcha, setCaptcha] = useState(generateCaptcha());
+  const updateField = (field, value) => {
+    setRegisterForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  };
 
-  function generateCaptcha() {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "";
-    for (let i = 0; i < 6; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
+  const refreshCaptcha = () => {
+    setCaptcha(createCaptcha());
+    updateField("securityCode", "");
+  };
+
+  const validateStep = (currentStep) => {
+    if (currentStep === 1) {
+      if (!registerForm.fullName.trim() || !registerForm.gender) {
+        showToast("Please enter your full name and select gender.", "error");
+        return false;
+      }
     }
-    return result;
-  }
 
-  const nextStep = () => setStep((prev) => Math.min(prev + 1, 3));
-  const prevStep = () => setStep((prev) => Math.max(prev - 1, 1));
+    if (currentStep === 2) {
+      const requiredFields = [
+        ["address", "address"],
+        ["city", "city"],
+        ["state", "state"],
+        ["district", "district"],
+        ["pincode", "pincode"],
+      ];
+
+      const missingField = requiredFields.find(
+        ([field]) => !registerForm[field].trim()
+      );
+
+      if (missingField) {
+        showToast(
+          `Please enter your ${missingField[1]} before continuing.`,
+          "error"
+        );
+        return false;
+      }
+
+      if (!/^\d{6}$/.test(registerForm.pincode)) {
+        showToast("Pincode must contain exactly 6 digits.", "error");
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const nextStep = () => {
+    if (validateStep(step)) {
+      setStep((previous) => Math.min(previous + 1, 3));
+    }
+  };
+
+  const prevStep = () => {
+    setStep((previous) => Math.max(previous - 1, 1));
+  };
 
   const handleRegister = async () => {
-    if (registerForm.securityCode !== captcha) {
-      showToast("Incorrect Security Code. Please try again.", "error");
+    if (isSubmitting) return;
+
+    if (!validateStep(1) || !validateStep(2)) {
+      return;
+    }
+
+    if (!/^[6-9]\d{9}$/.test(registerForm.phoneNumber.trim())) {
+      showToast("Please enter a valid 10-digit mobile number.", "error");
+      return;
+    }
+
+    if (!/^\S+@\S+\.\S+$/.test(registerForm.email.trim())) {
+      showToast("Please enter a valid email address.", "error");
+      return;
+    }
+
+    if (registerForm.password.length < 6) {
+      showToast("Password must contain at least 6 characters.", "error");
       return;
     }
 
@@ -48,86 +121,129 @@ export default function MultiStepRegister({ onRegisterSuccess }) {
       return;
     }
 
+    if (registerForm.securityCode.trim() !== captcha) {
+      showToast("Incorrect Security Code. Please try again.", "error");
+      refreshCaptcha();
+      return;
+    }
+
     setIsSubmitting(true);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
+        signal: controller.signal,
         body: JSON.stringify({
-          fullName: registerForm.fullName,
+          fullName: registerForm.fullName.trim(),
           gender: registerForm.gender,
-          phoneNumber: registerForm.phoneNumber,
-          address: registerForm.address,
-          city: registerForm.city,
-          state: registerForm.state,
-          district: registerForm.district,
-          pincode: registerForm.pincode,
-          email: registerForm.email,
+          address: registerForm.address.trim(),
+          city: registerForm.city.trim(),
+          state: registerForm.state.trim(),
+          district: registerForm.district.trim(),
+          pincode: registerForm.pincode.trim(),
+          phoneNumber: registerForm.phoneNumber.trim(),
+          email: registerForm.email.trim().toLowerCase(),
           password: registerForm.password,
         }),
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : {};
 
-      if (response.ok) {
-        setTimeout(() => {
-          showToast("Registration Successful! Welcome email has been sent.", "success");
-          console.log("Registration successful:", data);
-          setIsSubmitting(false);
-          if (onRegisterSuccess) {
-            onRegisterSuccess();
-          }
-        }, 1000);
-        return;
-      } else {
-        if (data.errors) {
-          const errorMessages = data.errors.map(error => error.msg).join(', ');
-          showToast(`Registration failed: ${errorMessages}`, "error");
-        } else {
-          showToast(`Registration failed: ${data.message}`, "error");
-        }
+      if (!response.ok) {
+        const validationErrors = Array.isArray(data.errors)
+          ? data.errors
+              .map((error) => error.msg || error.message)
+              .filter(Boolean)
+              .join(", ")
+          : "";
+
+        throw new Error(
+          validationErrors ||
+            data.message ||
+            `Registration failed (HTTP ${response.status}).`
+        );
+      }
+
+      showToast(
+        data.message || "Registration successful. You can now log in.",
+        "success"
+      );
+
+      if (onRegisterSuccess) {
+        onRegisterSuccess(data);
       }
     } catch (error) {
-      console.error('Registration error:', error);
-      showToast('Registration failed. Please try again.', "error");
+      console.error("Registration error:", error);
+
+      if (error.name === "AbortError") {
+        showToast(
+          "The server did not respond within 15 seconds. Check that the backend is running on port 5000.",
+          "error"
+        );
+      } else if (error instanceof TypeError) {
+        showToast(
+          "Cannot connect to the server. Start the backend and verify it is running on port 5000.",
+          "error"
+        );
+      } else {
+        showToast(error.message || "Registration failed. Please try again.", "error");
+      }
+
+      refreshCaptcha();
+    } finally {
+      window.clearTimeout(timeoutId);
       setIsSubmitting(false);
     }
   };
 
   return (
     <div className="w-full max-w-xl mx-auto p-6 border border-gray-200 shadow-lg rounded-lg space-y-6 bg-white">
-      <h2 className="text-2xl font-bold text-gray-800 text-center mb-4">Citizen Registration</h2>
+      <h2 className="text-2xl font-bold text-gray-800 text-center mb-4">
+        Citizen Registration
+      </h2>
 
-      {/* Step Indicators */}
       <div className="flex justify-center space-x-4 mb-6">
-        {[1, 2, 3].map((s) => (
+        {[1, 2, 3].map((number) => (
           <div
-            key={s}
-            className={`w-8 h-8 flex items-center justify-center rounded-full ${step === s ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-500"
-              }`}
+            key={number}
+            className={`w-8 h-8 flex items-center justify-center rounded-full ${
+              step === number
+                ? "bg-blue-600 text-white"
+                : "bg-gray-200 text-gray-500"
+            }`}
           >
-            {s}
+            {number}
           </div>
         ))}
       </div>
 
-      {/* Step 1 - Personal Info */}
       {step === 1 && (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Full Name</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Full Name
+            </label>
             <input
+              required
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.fullName}
-              onChange={(e) => setRegisterForm({ ...registerForm, fullName: e.target.value })}
+              onChange={(event) => updateField("fullName", event.target.value)}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Gender</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Gender
+            </label>
             <div className="flex space-x-4 mt-1">
               {["Male", "Female", "Transgender"].map((option) => (
                 <label key={option} className="flex items-center space-x-2">
@@ -136,7 +252,7 @@ export default function MultiStepRegister({ onRegisterSuccess }) {
                     name="gender"
                     value={option}
                     checked={registerForm.gender === option}
-                    onChange={(e) => setRegisterForm({ ...registerForm, gender: e.target.value })}
+                    onChange={(event) => updateField("gender", event.target.value)}
                   />
                   <span>{option}</span>
                 </label>
@@ -144,41 +260,47 @@ export default function MultiStepRegister({ onRegisterSuccess }) {
             </div>
           </div>
 
-          <div className="flex justify-end space-x-2">
-            <button onClick={nextStep} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={nextStep}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            >
               Next
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 2 - Contact Details */}
       {step === 2 && (
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Address / Premises</label>
-            <input
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              value={registerForm.address}
-              onChange={(e) => setRegisterForm({ ...registerForm, address: e.target.value })}
-            />
-          </div>
+          {[
+            ["address", "Address / Premises"],
+            ["city", "City"],
+            ["district", "District"],
+          ].map(([field, label]) => (
+            <div key={field}>
+              <label className="block text-sm font-medium text-gray-700">
+                {label}
+              </label>
+              <input
+                required
+                className="w-full border border-gray-300 rounded px-3 py-2"
+                value={registerForm[field]}
+                onChange={(event) => updateField(field, event.target.value)}
+              />
+            </div>
+          ))}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">City</label>
-            <input
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              value={registerForm.city}
-              onChange={(e) => setRegisterForm({ ...registerForm, city: e.target.value })}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700">State</label>
+            <label className="block text-sm font-medium text-gray-700">
+              State
+            </label>
             <select
+              required
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.state}
-              onChange={(e) => setRegisterForm({ ...registerForm, state: e.target.value })}
+              onChange={(event) => updateField("state", event.target.value)}
             >
               <option value="">-- Select State --</option>
               <option value="Delhi">Delhi</option>
@@ -188,85 +310,111 @@ export default function MultiStepRegister({ onRegisterSuccess }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">District</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Pincode
+            </label>
             <input
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              value={registerForm.district}
-              onChange={(e) => setRegisterForm({ ...registerForm, district: e.target.value })}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Pincode</label>
-            <input
+              required
+              inputMode="numeric"
+              maxLength="6"
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.pincode}
-              onChange={(e) => setRegisterForm({ ...registerForm, pincode: e.target.value })}
+              onChange={(event) =>
+                updateField("pincode", event.target.value.replace(/\D/g, ""))
+              }
             />
           </div>
 
-          <div className="flex justify-between space-x-2">
-            <button onClick={prevStep} className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300">
+          <div className="flex justify-between">
+            <button
+              type="button"
+              onClick={prevStep}
+              className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300"
+            >
               Back
             </button>
-            <button onClick={nextStep} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+            <button
+              type="button"
+              onClick={nextStep}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            >
               Next
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 3 - Account Setup */}
       {step === 3 && (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Mobile Number</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Mobile Number
+            </label>
             <input
+              required
+              inputMode="numeric"
+              maxLength="10"
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.phoneNumber}
-              onChange={(e) => setRegisterForm({ ...registerForm, phoneNumber: e.target.value })}
+              onChange={(event) =>
+                updateField("phoneNumber", event.target.value.replace(/\D/g, ""))
+              }
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Email</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Email
+            </label>
             <input
+              required
               type="email"
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.email}
-              onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
+              onChange={(event) => updateField("email", event.target.value)}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Password</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Password
+            </label>
             <input
+              required
               type="password"
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.password}
-              onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
+              onChange={(event) => updateField("password", event.target.value)}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Confirm Password</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Confirm Password
+            </label>
             <input
+              required
               type="password"
               className="w-full border border-gray-300 rounded px-3 py-2"
               value={registerForm.confirmPassword}
-              onChange={(e) => setRegisterForm({ ...registerForm, confirmPassword: e.target.value })}
+              onChange={(event) =>
+                updateField("confirmPassword", event.target.value)
+              }
             />
           </div>
 
-          {/* Security Code with Refresh */}
           <div>
-            <label className="block text-sm font-medium text-gray-700">Security Code</label>
+            <label className="block text-sm font-medium text-gray-700">
+              Security Code
+            </label>
             <div className="flex items-center space-x-4 mt-1">
               <input
                 className="w-full border border-gray-300 rounded px-3 py-2"
                 placeholder="Enter the code"
                 value={registerForm.securityCode}
-                onChange={(e) => setRegisterForm({ ...registerForm, securityCode: e.target.value })}
+                onChange={(event) =>
+                  updateField("securityCode", event.target.value)
+                }
               />
               <div className="px-3 py-2 bg-gray-100 rounded text-gray-700 font-bold min-w-[80px] text-center">
                 {captcha}
@@ -274,29 +422,52 @@ export default function MultiStepRegister({ onRegisterSuccess }) {
               <button
                 type="button"
                 className="text-blue-600 hover:underline"
-                onClick={() => setCaptcha(generateCaptcha())}
+                onClick={refreshCaptcha}
               >
                 Refresh
               </button>
             </div>
           </div>
 
-          <div className="flex justify-between space-x-2">
-            <button onClick={prevStep} className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300">
+          <div className="flex justify-between">
+            <button
+              type="button"
+              onClick={prevStep}
+              disabled={isSubmitting}
+              className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300 disabled:opacity-50"
+            >
               Back
             </button>
-            <button 
-              onClick={handleRegister} 
+
+            <button
+              type="button"
+              onClick={handleRegister}
               disabled={isSubmitting}
               className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isSubmitting && (
-                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                <svg
+                  className="animate-spin h-5 w-5 text-white"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                  />
                 </svg>
               )}
-              {isSubmitting ? 'Creating Account...' : 'Create Account'}
+              {isSubmitting ? "Creating Account..." : "Create Account"}
             </button>
           </div>
         </div>

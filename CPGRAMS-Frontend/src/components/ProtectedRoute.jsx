@@ -1,28 +1,29 @@
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 
-const ProtectedRoute = ({ allowedRoles }) => {
-    const location = useLocation();
-    const token = localStorage.getItem('token');
-    const userRaw = localStorage.getItem('user');
+export default function ProtectedRoute({ allowedRoles = [] }) {
+  const location = useLocation();
+  const token = localStorage.getItem("token");
 
-    if (!token || !userRaw) {
-        return <Navigate to="/auth" replace state={{ from: location }} />;
-    }
+  let user = null;
 
-    let user;
-    try {
-        user = JSON.parse(userRaw);
-    } catch (error) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        return <Navigate to="/auth" replace state={{ from: location }} />;
-    }
+  try {
+    const storedUser = localStorage.getItem("user");
+    user = storedUser ? JSON.parse(storedUser) : null;
+  } catch (error) {
+    console.error("Could not read stored user:", error);
+    localStorage.removeItem("user");
+  }
 
-    if (Array.isArray(allowedRoles) && allowedRoles.length > 0 && !allowedRoles.includes(user?.role)) {
-        return <Navigate to="/auth" replace />;
-    }
+  if (!token || !user) {
+    return <Navigate to="/auth" replace state={{ from: location.pathname }} />;
+  }
 
-    return <Outlet />;
-};
+  if (
+    allowedRoles.length > 0 &&
+    (!user.role || !allowedRoles.includes(user.role))
+  ) {
+    return <Navigate to="/auth" replace />;
+  }
 
-export default ProtectedRoute;
+  return <Outlet />;
+}
